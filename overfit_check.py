@@ -1,5 +1,5 @@
 import torch
-from model.no_attention import NoAttention
+from model.with_attention import WithAttention
 from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 from collections import Counter
@@ -8,8 +8,8 @@ from model.inference import build_generation_case, generate_sample
 
 SEQ_LEN    = 128
 BATCH      = 16
-EPOCHS     = 5
-LR         = 1e-4
+EPOCHS     = 10
+LR         = 3e-4
 DROPOUT    = 0.1
 MAX_SEQ    = SEQ_LEN
 MAX_VOCAB  = 10000
@@ -17,6 +17,7 @@ FF_MULT    = 8 / 3
 
 DIM          = 512
 N_LAYERS     = 6
+N_ATTN_HEADS = 4
 N_WAVE_HEADS = 4
 N_SCALES     = 4  
 SIGMA_SCALES = [1.0, 4.0, 16.0, 64.0]
@@ -75,12 +76,9 @@ print(f"  Sentences: train={len(train_texts):,}  val={len(val_texts):,}  test={l
 tokenizer  = SimpleWordTokenizer(train_texts, MAX_VOCAB)
 vocab_size = len(tokenizer)
 
-print("\n ====== Tokenize Data ================")
 train_ids = [tokenizer.encode(t) for t in train_texts]
 val_ids   = [tokenizer.encode(t) for t in val_texts]
 test_ids  = [tokenizer.encode(t) for t in test_texts]
-print("\n Done")
-
 
 train_ds = TextDataset(train_ids, SEQ_LEN)
 val_ds   = TextDataset(val_ids,   SEQ_LEN)
@@ -93,21 +91,22 @@ test_dl  = DataLoader(test_ds,  batch_size=BATCH, shuffle=False, num_workers=0, 
 print(f"  Batches : train={len(train_dl):,}  val={len(val_dl):,}  test={len(test_dl):,}")
 
 
-model = NoAttention(
-    vocab_size=vocab_size, dim=DIM, n_layers=N_LAYERS, n_wave_heads=N_WAVE_HEADS,
+model = WithAttention(
+    vocab_size=vocab_size, dim=DIM, n_layers=N_LAYERS,
+    n_attn_heads=N_ATTN_HEADS, n_wave_heads=N_WAVE_HEADS,
     n_scales=N_SCALES, sigma_scales=SIGMA_SCALES,
     ff_mult=FF_MULT, dropout=DROPOUT, max_seq=MAX_SEQ
 ).to(device)
 
 pc, _ = count_params(model)
-print(f"  {'CrystalWave LLM':<25} {pc:>12,}   {'K=4 FFT multi-scale':>18}")
+print(f"  {'CrystalWave + Attention':<25} {pc:>12,}   {'attn=4, wave=4':>18}")
 
-tc, ppl_c, tim_c = train(model, train_dl, val_dl, device, "CrystalWaveConv No Attention At All", EPOCHS, LR)
+tc, ppl_c, tim_c = train(model, train_dl, val_dl, device, "CrystalWave + Attention (4 heads)", EPOCHS, LR)
 
 print(f"\n  Evaluating test set ...")
 avg_tc = sum(tim_c) / EPOCHS
 _, test_ppl_c = evaluate(model, test_dl, device)
-print(f"  {'CrystalWave LLM':<25} {test_ppl_c:>9.2f} {tc[-1]:>13.4f} {avg_tc:>10.2f}s {pc:>10,}")
+print(f"  {'CrystalWave + Attention':<25} {test_ppl_c:>9.2f} {tc[-1]:>13.4f} {avg_tc:>10.2f}s {pc:>10,}")
 
 sample_prompt, sample_target = build_generation_case(test_texts)
 sample_crystal = generate_sample(model, tokenizer, device, sample_prompt, MAX_SEQ=MAX_SEQ)
