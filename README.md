@@ -135,12 +135,24 @@ Edit [data/config.yaml](/home/a_rkk/paham/data/config.yaml) as needed. The most 
 - `model.n_scales`
 - `tokenizer.vocab_size`
 
+You can also keep your own config outside the repository and pass it explicitly at runtime:
+
+```bash
+python3 explore.py --config /path/to/your-config.yaml
+```
+
 ### 2. Run training
 
 From the repository root:
 
 ```bash
 python3 explore.py
+```
+
+Or with an external config file:
+
+```bash
+python3 explore.py --config /path/to/your-config.yaml
 ```
 
 ### 3. Training artifacts
