@@ -76,13 +76,25 @@ tokens → embedding → [CrystalWaveBlock × N] → RMSNorm → LM head
 
 ## Installation
 
-Install the package from the project root:
+Install directly from GitHub:
+
+```bash
+pip install git+https://github.com/Airukua/SUARA.git
+```
+
+To install with visualization and tracking extras:
+
+```bash
+pip install "suara[full] @ git+https://github.com/Airukua/SUARA.git"
+```
+
+If you already cloned the repository locally, you can also install from the project root:
 
 ```bash
 pip install .
 ```
 
-To also install visualization and tracking dependencies:
+Or install local extras:
 
 ```bash
 pip install ".[full]"
