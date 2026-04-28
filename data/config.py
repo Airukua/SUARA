@@ -63,6 +63,8 @@ class CheckpointConfig:
     output_directory: str = "artifacts/checkpoints"
     save_best: bool = True
     save_last: bool = True
+    resume_if_available: bool = False
+    resume_path: str | None = None
 
 
 @dataclass(frozen=True)

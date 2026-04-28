@@ -12,6 +12,7 @@ from data.config import load_config
 from model.inference import build_generation_case, generate_sample
 from model.model import CrystalWaveModel
 from model.train import count_params, train, evaluate
+from utils.cleaning import clean_texts
 from utils.dataset import TextDataset, encode_texts_to_memmap, load_memmap_metadata, write_corpus_file
 from utils.tokenizer import CrystalWaveTokenizer
 
@@ -41,12 +42,12 @@ def _filter_texts(rows, min_text_length):
     return [t for t in rows["text"] if len(t.strip()) > min_text_length]
 
 def _resolve_splits(dataset_dict, min_text_length, validation_split_ratio):
-    train_texts = _filter_texts(dataset_dict["train"], min_text_length)
+    train_texts = clean_texts(_filter_texts(dataset_dict["train"], min_text_length))
     test_split = "test" if "test" in dataset_dict else "validation" if "validation" in dataset_dict else "train"
-    test_texts = _filter_texts(dataset_dict[test_split], min_text_length)
+    test_texts = clean_texts(_filter_texts(dataset_dict[test_split], min_text_length))
 
     if "validation" in dataset_dict:
-        val_texts = _filter_texts(dataset_dict["validation"], min_text_length)
+        val_texts = clean_texts(_filter_texts(dataset_dict["validation"], min_text_length))
         return train_texts, val_texts, test_texts
 
     split_idx = max(1, int(len(train_texts) * (1.0 - validation_split_ratio)))
@@ -223,7 +224,36 @@ def _parse_args():
         default=None,
         help="Path ke file YAML config eksternal. Jika tidak diisi, pakai data/config.yaml bawaan.",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume training dari checkpoint last.pt jika tersedia.",
+    )
+    parser.add_argument(
+        "--resume-path",
+        type=str,
+        default=None,
+        help="Path checkpoint spesifik untuk resume training.",
+    )
     return parser.parse_args()
+
+
+def _resolve_resume_checkpoint(args, checkpoint_config, device):
+    if checkpoint_config is None or not checkpoint_config.enabled:
+        return None
+
+    requested_path = args.resume_path or checkpoint_config.resume_path
+    should_resume = args.resume or checkpoint_config.resume_if_available or requested_path is not None
+    if not should_resume:
+        return None
+
+    checkpoint_path = Path(requested_path) if requested_path is not None else Path(checkpoint_config.output_directory) / "last.pt"
+    if not checkpoint_path.exists():
+        print(f"  Resume requested, tapi checkpoint tidak ditemukan: {checkpoint_path}")
+        return None
+
+    print(f"  Resuming from checkpoint: {checkpoint_path}")
+    return torch.load(checkpoint_path, map_location=device)
 
 def main():
     args = _parse_args()
@@ -232,6 +262,7 @@ def main():
         print(f"  Using config: {Path(args.config).resolve()}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resume_checkpoint = _resolve_resume_checkpoint(args, cfg.checkpoint, device)
     with _stage_timer("Dataset"):
         ds = _load_dataset_with_cache(
             cfg.dataset.name,
@@ -341,6 +372,7 @@ def main():
         wandb_config=cfg.wandb,
         model_config=cfg.model.model_kwargs,
         checkpoint_config=cfg.checkpoint,
+        resume_checkpoint=resume_checkpoint,
     )
 
     print(f"\n  Evaluating test set ...")

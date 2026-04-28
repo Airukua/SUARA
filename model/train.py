@@ -106,6 +106,7 @@ def _save_checkpoint(
     checkpoint_path,
     model,
     optimizer,
+    scaler,
     step,
     best_val_loss,
     best_step,
@@ -122,6 +123,7 @@ def _save_checkpoint(
             "best_step": best_step,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
+            "scaler_state_dict": scaler.state_dict() if scaler is not None else None,
             "history": history,
         },
         checkpoint_path,
@@ -162,6 +164,7 @@ def train(
     wandb_config=None,
     model_config=None,
     checkpoint_config=None,
+    resume_checkpoint=None,
 ):
     model = model.to(device)
     opt = _build_optimizer(model, train_config)
@@ -185,22 +188,53 @@ def train(
         "samples": [],
         "elapsed_times": [],
     }
+    start_step = 1
+    best_val_loss = float("inf")
+    best_step = 0
+    early_stop_counter = 0
+    best_state_dict = None
+
+    if resume_checkpoint is not None:
+        model.load_state_dict(resume_checkpoint["model_state_dict"])
+        opt.load_state_dict(resume_checkpoint["optimizer_state_dict"])
+        scaler_state = resume_checkpoint.get("scaler_state_dict")
+        if scaler_state is not None:
+            scaler.load_state_dict(scaler_state)
+        history = resume_checkpoint.get("history", history)
+        best_val_loss = resume_checkpoint.get("best_val_loss", best_val_loss)
+        best_step = resume_checkpoint.get("best_step", best_step)
+        resumed_step = int(resume_checkpoint.get("step", 0))
+        start_step = resumed_step + 1
+        if train_config.restore_best_model and best_val_loss < float("inf"):
+            best_state_dict = {
+                name: tensor.detach().cpu().clone()
+                for name, tensor in model.state_dict().items()
+            }
 
     print(f"\n  ── Training [{label}] ──")
     print(f"  Optimizer: {getattr(train_config, 'optimizer', 'muon')}")
+    if resume_checkpoint is not None:
+        print(f"  Resume from step: {start_step - 1:,}")
 
     train_iter = _cycle_dataloader(train_dl)
     running_loss = 0.0
     running_grad_norm = 0.0
     window_count = 0
-    started_at = time.time()
-    best_val_loss = float("inf")
-    best_step = 0
-    early_stop_counter = 0
-    best_state_dict = None
+    resumed_elapsed = 0.0
+    if resume_checkpoint is not None and history.get("elapsed_times"):
+        resumed_elapsed = float(history["elapsed_times"][-1])
+    started_at = time.time() - resumed_elapsed
     print(f"  Total steps: {train_config.max_steps:,}")
+    if start_step > train_config.max_steps:
+        print("  Resume checkpoint sudah mencapai atau melewati total max_steps, skip training.")
+        history["best_val_loss"] = best_val_loss
+        history["best_step"] = best_step
+        if run is not None:
+            run.finish()
+        return history
     with tqdm(
         total=train_config.max_steps,
+        initial=start_step - 1,
         desc="Training",
         unit="step",
         dynamic_ncols=True,
@@ -208,9 +242,9 @@ def train(
         smoothing=0.05,
         bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}",
     ) as pbar:
-        for step in range(1, train_config.max_steps + 1):
-            if step == 1:
-                pbar.write("Starting first training step...")
+        for step in range(start_step, train_config.max_steps + 1):
+            if step == start_step:
+                pbar.write("Starting training step loop...")
             inp, lbl = next(train_iter)
             inp, lbl = inp.to(device), lbl.to(device)
 
@@ -356,6 +390,7 @@ def train(
                             checkpoint_dir / "best.pt",
                             model,
                             opt,
+                            scaler,
                             step,
                             best_val_loss,
                             best_step,
@@ -371,6 +406,7 @@ def train(
                         checkpoint_dir / "last.pt",
                         model,
                         opt,
+                        scaler,
                         step,
                         best_val_loss,
                         best_step,

@@ -155,6 +155,18 @@ Or with an external config file:
 python3 explore.py --config /path/to/your-config.yaml
 ```
 
+To resume from the latest checkpoint in `artifacts/checkpoints/last.pt`:
+
+```bash
+python3 explore.py --resume
+```
+
+To resume from a specific checkpoint file:
+
+```bash
+python3 explore.py --resume --resume-path /path/to/last.pt
+```
+
 ### 3. Training artifacts
 
 By default, artifacts are written under `artifacts/`:
@@ -164,6 +176,15 @@ By default, artifacts are written under `artifacts/`:
 - `artifacts/token_cache/` — memmap token files for train/val/test
 - `artifacts/checkpoints/` — `best.pt` and `last.pt` checkpoints
 - `artifacts/plots/` — loss and grad norm curves
+
+You can also enable automatic checkpoint resume in the config:
+
+```yaml
+checkpoint:
+  enabled: true
+  output_directory: artifacts/checkpoints
+  resume_if_available: true
+```
 
 ## Example Experiments
 
