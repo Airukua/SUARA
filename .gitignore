@@ -9,5 +9,4 @@ artifacts/
 *.lock
 
 baseline.py
-explore.py
 latency.py

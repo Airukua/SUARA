@@ -43,7 +43,7 @@ checkpoint:
   save_last: true
 
 model:
-  dim: 512              
+  dim: 768              
   n_layers: 4             
   max_seq: 512
   n_attn_heads: 1        

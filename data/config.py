@@ -194,10 +194,17 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def _normalize_nullable_value(value: Any) -> Any:
+    if isinstance(value, str) and value.strip().lower() in {"none", "null", "~", ""}:
+        return None
+    return value
+
+
 def _build_section(section_cls, raw: dict[str, Any] | None):
     raw = raw or {}
     if not isinstance(raw, dict):
         raise ValueError(f"section {section_cls.__name__} harus berbentuk mapping/object")
+    raw = {key: _normalize_nullable_value(value) for key, value in raw.items()}
     return section_cls(**raw)
 
 
