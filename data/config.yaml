@@ -1,0 +1,95 @@
+dataset:
+  name: indonesian-nlp/wikipedia-id
+  subset: null
+  cache_directory: artifacts/dataset_cache
+  min_text_length: 20
+  max_vocab: 50000
+  seq_len: 512
+  validation_split_ratio: 0.05
+
+dataloader:
+  batch_size: 16  
+  num_workers: 0
+  train_shuffle: true
+  eval_shuffle: false
+
+training:
+  max_steps: 40000        
+  learning_rate: 0.0005  
+  optimizer: adamW
+  dropout: 0.05           
+  precision: bf16
+  warmup_steps: 400
+  decay_start_step: none    
+  min_learning_rate: 0.00005
+  grad_clip: 1.0
+  eval_every_steps: 2000
+  eval_max_batches: 50
+  sample_every_steps: 2000
+  log_every_steps: 100
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.001
+  restore_best_model: true
+  weight_decay: 0.1
+  muon_momentum: 0.95
+  muon_nesterov: true
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+
+checkpoint:
+  enabled: true
+  output_directory: artifacts/checkpoints
+  save_best: true
+  save_last: true
+
+model:
+  dim: 512              
+  n_layers: 4             
+  max_seq: 512
+  n_attn_heads: 1        
+  n_wave_heads: 4   
+  n_scales: 5            
+  sigma_scales:
+    - 0.5     
+    - 2.0      
+    - 8.0      
+    - 32.0     
+    - 128.0    
+  ff_mult: 2.6666666667
+  attention_mode: disabled
+  ffn_mode: dense
+  gradient_checkpointing: true
+  num_experts: 4
+  active_experts: 2
+  aux_loss_coef: 0.01
+
+tokenizer:
+  backend: bpe
+  vocab_size: 40000
+  min_frequency: 2
+  lowercase: false
+  save_directory: artifacts/tokenizer
+  cache_directory: artifacts/token_cache
+  rewrite_cache: false
+  retrain: false
+  add_bos: false
+  add_eos: true
+
+generation:
+  prompt_words: 12
+  target_words: 24
+  max_new_tokens: 40
+  temperature: 0.9
+  top_k: 40
+
+plots:
+  enabled: true
+  output_directory: artifacts/plots
+
+wandb:
+  enabled: false
+  project: crystalwave
+  name: null
+  entity: null
+  mode: online
+  log_model: false

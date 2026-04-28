@@ -1,0 +1,9 @@
+numpy>=1.24
+torch>=2.1
+tqdm>=4.66
+PyYAML>=6.0
+datasets>=2.18
+tokenizers>=0.15
+tiktoken>=0.6
+matplotlib>=3.8
+wandb>=0.16

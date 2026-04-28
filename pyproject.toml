@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crystalwave-paham"
+version = "0.1.0"
+description = "CrystalWave model components, training utilities, and tokenizer tools."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Abdul Wahid Rukua", email = "rukuaabdulwahid@gmail.com" }
+]
+dependencies = [
+  "numpy>=1.24",
+  "torch>=2.1",
+  "tqdm>=4.66",
+  "PyYAML>=6.0",
+  "datasets>=2.18",
+  "tokenizers>=0.15",
+  "tiktoken>=0.6",
+]
+
+[project.optional-dependencies]
+viz = [
+  "matplotlib>=3.8",
+]
+tracking = [
+  "wandb>=0.16",
+]
+full = [
+  "matplotlib>=3.8",
+  "wandb>=0.16",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["arc", "data", "model", "utils"]
+
+[tool.setuptools.package-data]
+data = ["config.yaml"]

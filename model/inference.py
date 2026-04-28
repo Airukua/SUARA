@@ -20,7 +20,7 @@ def generate_sample(model, tokenizer, device, prompt, MAX_SEQ=None, max_new_toke
         MAX_SEQ = getattr(model, 'max_seq', 128)
     token_ids = tokenizer.encode(prompt)
     if not token_ids:
-        token_ids = [tokenizer.vocab['<bos>']]
+        token_ids = [tokenizer.bos_token_id]
 
     generated = list(token_ids)
 
@@ -40,7 +40,7 @@ def generate_sample(model, tokenizer, device, prompt, MAX_SEQ=None, max_new_toke
             next_token = torch.multinomial(probs, 1).item()
 
         generated.append(next_token)
-        if next_token == tokenizer.vocab['<eos>']:
+        if next_token == tokenizer.eos_token_id:
             break
 
     return tokenizer.decode(generated)
