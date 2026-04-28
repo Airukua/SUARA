@@ -1,6 +1,6 @@
 # SUARA — Spectral Universal Autoregressive Resonant Architecture
 
-[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-AiRukua-ffcf33?logo=huggingface&logoColor=black)](https://huggingface.co/AiRukua)
+[![HuggingFace](https://img.shields.io/badge/🤗%20HuggingFace-AiRukua-yellow)](https://huggingface.co/AiRukua)
 [![LinkedIn](https://img.shields.io/badge/LinkedIn-Abdul%20Wahid%20Rukua-0A66C2?logo=linkedin&logoColor=white)](https://id.linkedin.com/in/abdul-wahid-rukua)
 [![License: AGPL v3+](https://img.shields.io/badge/License-AGPL%20v3%2B-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
