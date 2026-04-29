@@ -1,10 +1,13 @@
 import json
 from pathlib import Path
+from typing import Iterable
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
+
+from utils.cleaning import DEFAULT_TEXT_CHUNK_SIZE
 
 
 class TextDataset(Dataset):
@@ -81,6 +84,19 @@ def load_memmap_metadata(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def iter_texts(text_source):
+    if isinstance(text_source, (str, Path)):
+        path = Path(text_source)
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                text = line.rstrip("\n")
+                if text:
+                    yield text
+        return
+
+    yield from text_source
+
+
 def encode_texts_to_memmap(
     tokenizer,
     texts,
@@ -91,6 +107,8 @@ def encode_texts_to_memmap(
     add_eos=False,
     desc="Encoding",
     extra_metadata=None,
+    text_count=None,
+    chunk_size=DEFAULT_TEXT_CHUNK_SIZE,
 ):
     output_path = Path(output_path)
     metadata_path = Path(metadata_path)
@@ -98,19 +116,18 @@ def encode_texts_to_memmap(
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
     token_dtype = token_dtype_for_vocab(vocab_size)
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
     total_tokens = 0
-    for text in tqdm(texts, desc=f"{desc} size", unit="text", dynamic_ncols=True):
-        total_tokens += len(
-            tokenizer.encode(
-                text,
-                add_bos=add_bos,
-                add_eos=add_eos,
-            )
-        )
+    observed_text_count = 0
+    for text in tqdm(iter_texts(texts), desc=f"{desc} size", unit="text", dynamic_ncols=True):
+        observed_text_count += 1
+        total_tokens += len(tokenizer.encode(text, add_bos=add_bos, add_eos=add_eos))
 
     mmap = np.memmap(output_path, mode="w+", dtype=token_dtype, shape=(total_tokens,))
     cursor = 0
-    for text in tqdm(texts, desc=desc, unit="text", dynamic_ncols=True):
+    for text in tqdm(iter_texts(texts), desc=desc, unit="text", dynamic_ncols=True):
         encoded = np.asarray(
             tokenizer.encode(
                 text,
@@ -127,10 +144,11 @@ def encode_texts_to_memmap(
     metadata = {
         "dtype": np.dtype(token_dtype).name,
         "total_tokens": total_tokens,
-        "text_count": len(texts),
+        "text_count": observed_text_count if text_count is None else text_count,
         "add_bos": add_bos,
         "add_eos": add_eos,
         "vocab_size": vocab_size,
+        "chunk_size": chunk_size,
     }
     if extra_metadata:
         metadata.update(extra_metadata)

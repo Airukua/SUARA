@@ -1,4 +1,5 @@
 import argparse
+import json
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,8 +13,8 @@ from data.config import load_config
 from model.inference import build_generation_case, generate_sample
 from model.model import CrystalWaveModel
 from model.train import count_params, train, evaluate
-from utils.cleaning import clean_texts
-from utils.dataset import TextDataset, encode_texts_to_memmap, load_memmap_metadata, write_corpus_file
+from utils.cleaning import iter_clean_texts
+from utils.dataset import TextDataset, encode_texts_to_memmap, load_memmap_metadata
 from utils.tokenizer import CrystalWaveTokenizer
 
 try:
@@ -38,23 +39,152 @@ def _stage_timer(label):
     finally:
         print(f"[{label}] selesai dalam {_format_seconds(time.perf_counter() - start)}")
 
-def _filter_texts(rows, min_text_length):
-    return [t for t in rows["text"] if len(t.strip()) > min_text_length]
+def _iter_filtered_texts(texts, min_text_length):
+    for text in texts:
+        if isinstance(text, str) and len(text.strip()) > min_text_length:
+            yield text
 
-def _resolve_splits(dataset_dict, min_text_length, validation_split_ratio):
-    train_texts = clean_texts(_filter_texts(dataset_dict["train"], min_text_length))
+
+def _iter_clean_filtered_texts(texts, min_text_length, chunk_size):
+    for cleaned in iter_clean_texts(
+        _iter_filtered_texts(texts, min_text_length),
+        chunk_size=chunk_size,
+    ):
+        if cleaned:
+            yield cleaned
+
+
+def _count_filtered_texts(texts, min_text_length):
+    return sum(1 for _ in _iter_filtered_texts(texts, min_text_length))
+
+
+def _write_clean_text_file(texts, path, min_text_length, chunk_size):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with path.open("w", encoding="utf-8") as f:
+        for cleaned in _iter_clean_filtered_texts(texts, min_text_length, chunk_size):
+            f.write(cleaned)
+            f.write("\n")
+            count += 1
+    return count
+
+
+def _write_clean_train_val_split(texts, train_path, val_path, split_idx, min_text_length, chunk_size):
+    train_path = Path(train_path)
+    val_path = Path(val_path)
+    train_path.parent.mkdir(parents=True, exist_ok=True)
+    val_path.parent.mkdir(parents=True, exist_ok=True)
+
+    train_count = 0
+    val_count = 0
+    seen = 0
+    with train_path.open("w", encoding="utf-8") as train_f, val_path.open("w", encoding="utf-8") as val_f:
+        for cleaned in _iter_clean_filtered_texts(texts, min_text_length, chunk_size):
+            if seen < split_idx:
+                train_f.write(cleaned)
+                train_f.write("\n")
+                train_count += 1
+            else:
+                val_f.write(cleaned)
+                val_f.write("\n")
+                val_count += 1
+            seen += 1
+    return train_count, val_count
+
+
+def _read_text_samples(path, limit):
+    samples = []
+    with Path(path).open("r", encoding="utf-8") as f:
+        for line in f:
+            text = line.rstrip("\n")
+            if text:
+                samples.append(text)
+            if len(samples) >= limit:
+                break
+    return samples
+
+
+def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, cache_dir, cleaning_chunk_size):
+    text_dir = Path(cache_dir) / "clean_text"
+    text_dir.mkdir(parents=True, exist_ok=True)
+    metadata_path = text_dir / "metadata.json"
+    train_path = text_dir / "train.txt"
+    val_path = text_dir / "val.txt"
+    test_path = text_dir / "test.txt"
     test_split = "test" if "test" in dataset_dict else "validation" if "validation" in dataset_dict else "train"
-    test_texts = clean_texts(_filter_texts(dataset_dict[test_split], min_text_length))
+    has_validation = "validation" in dataset_dict
 
-    if "validation" in dataset_dict:
-        val_texts = clean_texts(_filter_texts(dataset_dict["validation"], min_text_length))
-        return train_texts, val_texts, test_texts
+    if metadata_path.exists() and train_path.exists() and val_path.exists() and test_path.exists():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        cache_matches = (
+            metadata.get("min_text_length") == min_text_length
+            and metadata.get("validation_split_ratio") == validation_split_ratio
+            and metadata.get("cleaning_chunk_size") == cleaning_chunk_size
+            and metadata.get("test_split") == test_split
+            and metadata.get("has_validation") == has_validation
+        )
+        if cache_matches:
+            print(f"  Reusing cleaned text cache from {text_dir}")
+            return metadata
 
-    split_idx = max(1, int(len(train_texts) * (1.0 - validation_split_ratio)))
-    split_idx = min(split_idx, len(train_texts) - 1)
-    val_texts = train_texts[split_idx:]
-    train_texts = train_texts[:split_idx]
-    return train_texts, val_texts, test_texts
+    metadata = {
+        "min_text_length": min_text_length,
+        "validation_split_ratio": validation_split_ratio,
+        "cleaning_chunk_size": cleaning_chunk_size,
+        "has_validation": has_validation,
+        "test_split": test_split,
+        "paths": {
+            "train": str(train_path),
+            "val": str(val_path),
+            "test": str(test_path),
+        },
+    }
+
+    if has_validation:
+        train_count = _write_clean_text_file(
+            dataset_dict["train"]["text"],
+            train_path,
+            min_text_length,
+            cleaning_chunk_size,
+        )
+        val_count = _write_clean_text_file(
+            dataset_dict["validation"]["text"],
+            val_path,
+            min_text_length,
+            cleaning_chunk_size,
+        )
+    else:
+        valid_train_count = _count_filtered_texts(dataset_dict["train"]["text"], min_text_length)
+        if valid_train_count < 2:
+            raise ValueError(
+                "train split harus memiliki minimal 2 text setelah filtering "
+                "agar train/validation split bisa dibuat"
+            )
+        split_idx = max(1, int(valid_train_count * (1.0 - validation_split_ratio)))
+        split_idx = min(split_idx, valid_train_count - 1)
+        train_count, val_count = _write_clean_train_val_split(
+            dataset_dict["train"]["text"],
+            train_path,
+            val_path,
+            split_idx,
+            min_text_length,
+            cleaning_chunk_size,
+        )
+
+    test_count = _write_clean_text_file(
+        dataset_dict[test_split]["text"],
+        test_path,
+        min_text_length,
+        cleaning_chunk_size,
+    )
+    metadata["counts"] = {
+        "train": train_count,
+        "val": val_count,
+        "test": test_count,
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return metadata
 
 
 def _build_generation_cases(texts, sample_count, prompt_words, target_words):
@@ -172,7 +302,7 @@ def _tokenizer_ready(tokenizer_dir):
         and (tokenizer_dir / "tokenizer.json").exists()
     )
 
-def _prepare_split(cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, split_name, texts):
+def _prepare_split(cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, split_name, text_path, text_count):
     token_path = cache_dir / f"{split_name}.bin"
     meta_path = cache_dir / f"{split_name}.json"
     rewrite_cache = cfg.tokenizer.retrain or cfg.tokenizer.rewrite_cache
@@ -181,7 +311,7 @@ def _prepare_split(cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, split_n
     if not rewrite_cache and token_path.exists() and meta_path.exists():
         metadata = load_memmap_metadata(meta_path)
         cache_matches = (
-            metadata.get("text_count") == len(texts)
+            metadata.get("text_count") == text_count
             and metadata.get("add_bos") == cfg.tokenizer.add_bos
             and metadata.get("add_eos") == cfg.tokenizer.add_eos
             and metadata.get("vocab_size") == vocab_size
@@ -194,16 +324,19 @@ def _prepare_split(cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, split_n
         print(f"  Encoding {split_name} split to memmap ...")
         _, metadata = encode_texts_to_memmap(
             tokenizer,
-            texts,
+            text_path,
             token_path,
             meta_path,
             vocab_size=vocab_size,
             add_bos=cfg.tokenizer.add_bos,
             add_eos=cfg.tokenizer.add_eos,
             desc=f"Encode {split_name}",
+            text_count=text_count,
+            chunk_size=cfg.dataset.tokenize_chunk_size,
             extra_metadata={
                 "tokenizer_backend": cfg.tokenizer.backend,
                 "tokenizer_directory": str(tokenizer_dir),
+                "text_path": str(text_path),
             },
         )
     else:
@@ -271,12 +404,20 @@ def main():
         )
 
     with _stage_timer("Split Resolve"):
-        train_texts, val_texts, test_texts = _resolve_splits(
+        text_split_meta = _prepare_text_splits(
             ds,
             cfg.dataset.min_text_length,
             cfg.dataset.validation_split_ratio,
+            cfg.tokenizer.cache_directory,
+            cfg.dataset.cleaning_chunk_size,
         )
-    print(f"  Sentences: train={len(train_texts):,}  val={len(val_texts):,}  test={len(test_texts):,}")
+    train_text_path = Path(text_split_meta["paths"]["train"])
+    val_text_path = Path(text_split_meta["paths"]["val"])
+    test_text_path = Path(text_split_meta["paths"]["test"])
+    train_text_count = text_split_meta["counts"]["train"]
+    val_text_count = text_split_meta["counts"]["val"]
+    test_text_count = text_split_meta["counts"]["test"]
+    print(f"  Sentences: train={train_text_count:,}  val={val_text_count:,}  test={test_text_count:,}")
 
     tokenizer_dir = Path(cfg.tokenizer.save_directory)
     if cfg.tokenizer.backend != "bpe":
@@ -285,9 +426,8 @@ def main():
     with _stage_timer("Tokenizer"):
         if cfg.tokenizer.retrain:
             print("  retrain=true, tokenizer BPE akan dilatih ulang")
-            corpus_path = write_corpus_file(train_texts, tokenizer_dir / "train_corpus.txt")
             tokenizer = CrystalWaveTokenizer.train_bpe(
-                files=[corpus_path],
+                files=[train_text_path],
                 vocab_size=cfg.tokenizer.vocab_size,
                 min_frequency=cfg.tokenizer.min_frequency,
                 lowercase=cfg.tokenizer.lowercase,
@@ -298,9 +438,8 @@ def main():
             tokenizer = CrystalWaveTokenizer.from_pretrained(tokenizer_dir)
         else:
             print("  Existing BPE tokenizer belum ada, training sekali untuk membuat cache tokenizer ...")
-            corpus_path = write_corpus_file(train_texts, tokenizer_dir / "train_corpus.txt")
             tokenizer = CrystalWaveTokenizer.train_bpe(
-                files=[corpus_path],
+                files=[train_text_path],
                 vocab_size=cfg.tokenizer.vocab_size,
                 min_frequency=cfg.tokenizer.min_frequency,
                 lowercase=cfg.tokenizer.lowercase,
@@ -315,9 +454,15 @@ def main():
 
     with _stage_timer("Token Cache"):
         print("  Preparing token cache ...")
-        train_ds, train_tokens = _prepare_split(cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, "train", train_texts)
-        val_ds, val_tokens = _prepare_split(cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, "val", val_texts)
-        test_ds, test_tokens = _prepare_split(cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, "test", test_texts)
+        train_ds, train_tokens = _prepare_split(
+            cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, "train", train_text_path, train_text_count
+        )
+        val_ds, val_tokens = _prepare_split(
+            cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, "val", val_text_path, val_text_count
+        )
+        test_ds, test_tokens = _prepare_split(
+            cfg, cache_dir, tokenizer_dir, tokenizer, vocab_size, "test", test_text_path, test_text_count
+        )
     print(f"  Tokens  : train={train_tokens:,}  val={val_tokens:,}  test={test_tokens:,}")
 
     pin = device.type == "cuda"
@@ -353,8 +498,9 @@ def main():
     pc, _ = count_params(model)
     print(f"  {cfg.model.architecture_label:<25} {pc:>12,}   {cfg.model.architecture_detail:>18}")
 
+    val_preview_texts = _read_text_samples(val_text_path, limit=2_048)
     sample_prompt, sample_target = build_generation_case(
-        val_texts,
+        val_preview_texts,
         prompt_words=cfg.generation.prompt_words,
         target_words=cfg.generation.target_words,
     )
@@ -400,7 +546,7 @@ def main():
         )
 
     sample_cases = _build_generation_cases(
-        test_texts,
+        _read_text_samples(test_text_path, limit=4_096),
         sample_count=5,
         prompt_words=cfg.generation.prompt_words,
         target_words=cfg.generation.target_words,

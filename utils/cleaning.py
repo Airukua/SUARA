@@ -2,6 +2,7 @@ import re
 import unicodedata
 
 
+DEFAULT_TEXT_CHUNK_SIZE = 100_000
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -35,3 +36,18 @@ def clean_text(text: str) -> str:
 
 def clean_texts(texts):
     return [clean_text(text) for text in texts]
+
+
+def iter_clean_texts(texts, chunk_size=DEFAULT_TEXT_CHUNK_SIZE):
+    if chunk_size <= 0:
+        raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+
+    batch = []
+    for text in texts:
+        batch.append(text)
+        if len(batch) >= chunk_size:
+            yield from clean_texts(batch)
+            batch.clear()
+
+    if batch:
+        yield from clean_texts(batch)

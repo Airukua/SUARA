@@ -19,6 +19,8 @@ class DatasetConfig:
     subset: str = "wikitext-2-raw-v1"
     cache_directory: str = "artifacts/dataset_cache"
     min_text_length: int = 20
+    cleaning_chunk_size: int = 100_000
+    tokenize_chunk_size: int = 100_000
     max_vocab: int = 10_000
     seq_len: int = 128
     validation_split_ratio: float = 0.05

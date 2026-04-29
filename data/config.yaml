@@ -3,6 +3,8 @@ dataset:
   subset: null
   cache_directory: artifacts/dataset_cache
   min_text_length: 20
+  cleaning_chunk_size: 100000
+  tokenize_chunk_size: 100000
   max_vocab: 50000
   seq_len: 512
   validation_split_ratio: 0.05
