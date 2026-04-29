@@ -102,6 +102,50 @@ def _write_clean_train_val_split(texts, train_path, val_path, split_idx, min_tex
     return train_count, val_count
 
 
+def _write_clean_train_val_test_split(
+    texts,
+    train_path,
+    val_path,
+    test_path,
+    train_cutoff,
+    val_cutoff,
+    min_text_length,
+    chunk_size,
+    desc=None,
+):
+    train_path = Path(train_path)
+    val_path = Path(val_path)
+    test_path = Path(test_path)
+    train_path.parent.mkdir(parents=True, exist_ok=True)
+    val_path.parent.mkdir(parents=True, exist_ok=True)
+    test_path.parent.mkdir(parents=True, exist_ok=True)
+
+    train_count = 0
+    val_count = 0
+    test_count = 0
+    seen = 0
+    with (
+        train_path.open("w", encoding="utf-8") as train_f,
+        val_path.open("w", encoding="utf-8") as val_f,
+        test_path.open("w", encoding="utf-8") as test_f,
+    ):
+        for cleaned in _iter_clean_filtered_texts(texts, min_text_length, chunk_size, desc=desc):
+            if seen < train_cutoff:
+                train_f.write(cleaned)
+                train_f.write("\n")
+                train_count += 1
+            elif seen < val_cutoff:
+                val_f.write(cleaned)
+                val_f.write("\n")
+                val_count += 1
+            else:
+                test_f.write(cleaned)
+                test_f.write("\n")
+                test_count += 1
+            seen += 1
+    return train_count, val_count, test_count
+
+
 def _read_text_samples(path, limit):
     samples = []
     with Path(path).open("r", encoding="utf-8") as f:
@@ -114,24 +158,37 @@ def _read_text_samples(path, limit):
     return samples
 
 
-def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, cache_dir, cleaning_chunk_size):
+def _prepare_text_splits(
+    dataset_dict,
+    min_text_length,
+    validation_split_ratio,
+    test_split_ratio,
+    cache_dir,
+    cleaning_chunk_size,
+):
     text_dir = Path(cache_dir) / "clean_text"
     text_dir.mkdir(parents=True, exist_ok=True)
     metadata_path = text_dir / "metadata.json"
     train_path = text_dir / "train.txt"
     val_path = text_dir / "val.txt"
     test_path = text_dir / "test.txt"
-    test_split = "test" if "test" in dataset_dict else "validation" if "validation" in dataset_dict else "train"
     has_validation = "validation" in dataset_dict
+    has_test = "test" in dataset_dict
+
+    if validation_split_ratio < 0 or test_split_ratio < 0:
+        raise ValueError("validation_split_ratio dan test_split_ratio harus >= 0")
+    if validation_split_ratio + test_split_ratio >= 1.0:
+        raise ValueError("validation_split_ratio + test_split_ratio harus < 1.0")
 
     if metadata_path.exists() and train_path.exists() and val_path.exists() and test_path.exists():
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         cache_matches = (
             metadata.get("min_text_length") == min_text_length
             and metadata.get("validation_split_ratio") == validation_split_ratio
+            and metadata.get("test_split_ratio") == test_split_ratio
             and metadata.get("cleaning_chunk_size") == cleaning_chunk_size
-            and metadata.get("test_split") == test_split
             and metadata.get("has_validation") == has_validation
+            and metadata.get("has_test") == has_test
         )
         if cache_matches:
             print(f"  Reusing cleaned text cache from {text_dir}")
@@ -140,9 +197,10 @@ def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, 
     metadata = {
         "min_text_length": min_text_length,
         "validation_split_ratio": validation_split_ratio,
+        "test_split_ratio": test_split_ratio,
         "cleaning_chunk_size": cleaning_chunk_size,
         "has_validation": has_validation,
-        "test_split": test_split,
+        "has_test": has_test,
         "paths": {
             "train": str(train_path),
             "val": str(val_path),
@@ -150,7 +208,7 @@ def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, 
         },
     }
 
-    if has_validation:
+    if has_validation and has_test:
         train_count = _write_clean_text_file(
             dataset_dict["train"]["text"],
             train_path,
@@ -165,11 +223,83 @@ def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, 
             cleaning_chunk_size,
             desc="Clean val",
         )
-    else:
+        test_count = _write_clean_text_file(
+            dataset_dict["test"]["text"],
+            test_path,
+            min_text_length,
+            cleaning_chunk_size,
+            desc="Clean test",
+        )
+    elif not has_validation and not has_test:
         valid_train_count = _count_filtered_texts(
             dataset_dict["train"]["text"],
             min_text_length,
             desc="Count train",
+        )
+        if valid_train_count < 3:
+            raise ValueError(
+                "train split harus memiliki minimal 3 text setelah filtering "
+                "agar train/validation/test split bisa dibuat"
+            )
+        train_cutoff = int(valid_train_count * (1.0 - validation_split_ratio - test_split_ratio))
+        val_count_target = int(valid_train_count * validation_split_ratio)
+        train_cutoff = max(1, train_cutoff)
+        val_count_target = max(1, val_count_target)
+        val_cutoff = train_cutoff + val_count_target
+        if val_cutoff >= valid_train_count:
+            val_cutoff = valid_train_count - 1
+        if train_cutoff >= val_cutoff:
+            train_cutoff = max(1, val_cutoff - 1)
+
+        train_count, val_count, test_count = _write_clean_train_val_test_split(
+            dataset_dict["train"]["text"],
+            train_path,
+            val_path,
+            test_path,
+            train_cutoff,
+            val_cutoff,
+            min_text_length,
+            cleaning_chunk_size,
+            desc="Clean train/val/test",
+        )
+    elif has_validation:
+        train_count = _write_clean_text_file(
+            dataset_dict["train"]["text"],
+            train_path,
+            min_text_length,
+            cleaning_chunk_size,
+            desc="Clean train",
+        )
+        val_count = _write_clean_text_file(
+            dataset_dict["validation"]["text"],
+            val_path,
+            min_text_length,
+            cleaning_chunk_size,
+            desc="Clean val",
+        )
+        test_source_count = _count_filtered_texts(
+            dataset_dict["train"]["text"],
+            min_text_length,
+            desc="Count test from train",
+        )
+        if test_source_count < 1:
+            raise ValueError("train split kosong setelah filtering, test split tidak bisa dibuat")
+        test_start = max(0, test_source_count - max(1, int(test_source_count * test_split_ratio)))
+        _, test_count = _write_clean_train_val_split(
+            dataset_dict["train"]["text"],
+            text_dir / "_unused_train_prefix.txt",
+            test_path,
+            test_start,
+            min_text_length,
+            cleaning_chunk_size,
+            desc="Clean test from train",
+        )
+        Path(text_dir / "_unused_train_prefix.txt").unlink(missing_ok=True)
+    else:
+        valid_train_count = _count_filtered_texts(
+            dataset_dict["train"]["text"],
+            min_text_length,
+            desc="Count val from train",
         )
         if valid_train_count < 2:
             raise ValueError(
@@ -187,14 +317,14 @@ def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, 
             cleaning_chunk_size,
             desc="Clean train/val",
         )
+        test_count = _write_clean_text_file(
+            dataset_dict["test"]["text"],
+            test_path,
+            min_text_length,
+            cleaning_chunk_size,
+            desc="Clean test",
+        )
 
-    test_count = _write_clean_text_file(
-        dataset_dict[test_split]["text"],
-        test_path,
-        min_text_length,
-        cleaning_chunk_size,
-        desc="Clean test",
-    )
     metadata["counts"] = {
         "train": train_count,
         "val": val_count,
@@ -425,6 +555,7 @@ def main():
             ds,
             cfg.dataset.min_text_length,
             cfg.dataset.validation_split_ratio,
+            cfg.dataset.test_split_ratio,
             cfg.tokenizer.cache_directory,
             cfg.dataset.cleaning_chunk_size,
         )

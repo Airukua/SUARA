@@ -7,7 +7,8 @@ dataset:
   tokenize_chunk_size: 100000
   max_vocab: 50000
   seq_len: 512
-  validation_split_ratio: 0.05
+  validation_split_ratio: 0.02
+  test_split_ratio: 0.03
 
 dataloader:
   batch_size: 16  

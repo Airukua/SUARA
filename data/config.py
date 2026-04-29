@@ -23,7 +23,8 @@ class DatasetConfig:
     tokenize_chunk_size: int = 100_000
     max_vocab: int = 10_000
     seq_len: int = 128
-    validation_split_ratio: float = 0.05
+    validation_split_ratio: float = 0.02
+    test_split_ratio: float = 0.03
 
 
 @dataclass(frozen=True)
