@@ -10,3 +10,4 @@ artifacts/
 
 baseline.py
 latency.py
+.codex
