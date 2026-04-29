@@ -1,5 +1,5 @@
 dataset:
-  name: indonesian-nlp/wikipedia-id
+  name: Lyon28/Corpus-Indonesia
   subset: null
   cache_directory: artifacts/dataset_cache
   min_text_length: 20
@@ -47,11 +47,11 @@ checkpoint:
   resume_path: null
 
 model:
-  dim: 112             
-  n_layers: 2             
+  dim: 768             
+  n_layers: 8             
   max_seq: 512
   n_attn_heads: 1        
-  n_wave_heads: 4  
+  n_wave_heads: 6  
   n_scales: 5            
   sigma_scales:
     - 0.5     
