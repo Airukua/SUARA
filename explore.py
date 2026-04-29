@@ -8,6 +8,7 @@ import torch
 from datasets import DownloadConfig, DownloadMode, load_dataset
 from datasets.utils.logging import enable_progress_bar, set_verbosity_info
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from data.config import load_config
 from model.inference import build_generation_case, generate_sample
@@ -39,38 +40,46 @@ def _stage_timer(label):
     finally:
         print(f"[{label}] selesai dalam {_format_seconds(time.perf_counter() - start)}")
 
-def _iter_filtered_texts(texts, min_text_length):
-    for text in texts:
+def _iter_filtered_texts(texts, min_text_length, desc=None):
+    total = len(texts) if hasattr(texts, "__len__") else None
+    iterator = tqdm(
+        texts,
+        desc=desc,
+        total=total,
+        unit="text",
+        dynamic_ncols=True,
+    ) if desc else texts
+    for text in iterator:
         if isinstance(text, str) and len(text.strip()) > min_text_length:
             yield text
 
 
-def _iter_clean_filtered_texts(texts, min_text_length, chunk_size):
+def _iter_clean_filtered_texts(texts, min_text_length, chunk_size, desc=None):
     for cleaned in iter_clean_texts(
-        _iter_filtered_texts(texts, min_text_length),
+        _iter_filtered_texts(texts, min_text_length, desc=desc),
         chunk_size=chunk_size,
     ):
         if cleaned:
             yield cleaned
 
 
-def _count_filtered_texts(texts, min_text_length):
-    return sum(1 for _ in _iter_filtered_texts(texts, min_text_length))
+def _count_filtered_texts(texts, min_text_length, desc=None):
+    return sum(1 for _ in _iter_filtered_texts(texts, min_text_length, desc=desc))
 
 
-def _write_clean_text_file(texts, path, min_text_length, chunk_size):
+def _write_clean_text_file(texts, path, min_text_length, chunk_size, desc=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     count = 0
     with path.open("w", encoding="utf-8") as f:
-        for cleaned in _iter_clean_filtered_texts(texts, min_text_length, chunk_size):
+        for cleaned in _iter_clean_filtered_texts(texts, min_text_length, chunk_size, desc=desc):
             f.write(cleaned)
             f.write("\n")
             count += 1
     return count
 
 
-def _write_clean_train_val_split(texts, train_path, val_path, split_idx, min_text_length, chunk_size):
+def _write_clean_train_val_split(texts, train_path, val_path, split_idx, min_text_length, chunk_size, desc=None):
     train_path = Path(train_path)
     val_path = Path(val_path)
     train_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,7 +89,7 @@ def _write_clean_train_val_split(texts, train_path, val_path, split_idx, min_tex
     val_count = 0
     seen = 0
     with train_path.open("w", encoding="utf-8") as train_f, val_path.open("w", encoding="utf-8") as val_f:
-        for cleaned in _iter_clean_filtered_texts(texts, min_text_length, chunk_size):
+        for cleaned in _iter_clean_filtered_texts(texts, min_text_length, chunk_size, desc=desc):
             if seen < split_idx:
                 train_f.write(cleaned)
                 train_f.write("\n")
@@ -147,15 +156,21 @@ def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, 
             train_path,
             min_text_length,
             cleaning_chunk_size,
+            desc="Clean train",
         )
         val_count = _write_clean_text_file(
             dataset_dict["validation"]["text"],
             val_path,
             min_text_length,
             cleaning_chunk_size,
+            desc="Clean val",
         )
     else:
-        valid_train_count = _count_filtered_texts(dataset_dict["train"]["text"], min_text_length)
+        valid_train_count = _count_filtered_texts(
+            dataset_dict["train"]["text"],
+            min_text_length,
+            desc="Count train",
+        )
         if valid_train_count < 2:
             raise ValueError(
                 "train split harus memiliki minimal 2 text setelah filtering "
@@ -170,6 +185,7 @@ def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, 
             split_idx,
             min_text_length,
             cleaning_chunk_size,
+            desc="Clean train/val",
         )
 
     test_count = _write_clean_text_file(
@@ -177,6 +193,7 @@ def _prepare_text_splits(dataset_dict, min_text_length, validation_split_ratio, 
         test_path,
         min_text_length,
         cleaning_chunk_size,
+        desc="Clean test",
     )
     metadata["counts"] = {
         "train": train_count,
